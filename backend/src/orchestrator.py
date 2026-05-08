@@ -2,6 +2,7 @@ import os
 import json
 import boto3
 import time
+import decimal
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 rekognition = boto3.client('rekognition')
@@ -61,7 +62,7 @@ def lambda_handler(event, context):
             
             print(f"SQS Message Enqueued: {sqs_response.get('MessageId')}")
             
-            labels = [{'name': l['Name'], 'confidence': l['Confidence']} for l in labels_response.get('Labels', [])]
+            labels = [{'name': l['Name'], 'confidence': decimal.Decimal(str(l['Confidence']))} for l in labels_response.get('Labels', [])]
             moderation_flags = [l['Name'] for l in moderation_response.get('ModerationLabels', [])]
             
             is_blocked = len(moderation_flags) > 0
