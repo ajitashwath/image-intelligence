@@ -1,0 +1,368 @@
+﻿pipeline {
+
+    agent any
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        AWS_REGION       = 'us-east-1'
+        PROJECT_NAME     = 'event-driven-image-intelligence'
+        NODE_VERSION     = '20'
+        TERRAFORM_DIR    = 'terraform'
+        BACKEND_DIR      = 'backend'
+        FRONTEND_DIR     = 'frontend'
+        DOCKER_IMAGE_TAG = "${env.BUILD_NUMBER}"
+        IMAGE_NAME       = "image-intelligence-frontend"
+    }
+
+    parameters {
+        choice(
+            name: 'DEPLOY_ENV',
+            choices: ['dev', 'prod'],
+            description: 'Target deployment environment (dev = auto-approve; prod = manual gate)'
+        )
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: 'Skip unit-test and lint stages (use only for hotfixes)'
+        )
+        booleanParam(
+            name: 'DEPLOY_INFRA',
+            defaultValue: false,
+            description: 'Run Terraform plan + apply (checked = yes, unchecked = CDK-only)'
+        )
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo "=== Checking out ${env.GIT_BRANCH} @ ${env.GIT_COMMIT} ==="
+                checkout scm
+
+                sh '''
+                    echo "Branch  : ${GIT_BRANCH}"
+                    echo "Commit  : ${GIT_COMMIT}"
+                    echo "Build # : ${BUILD_NUMBER}"
+                    echo "Env     : ${DEPLOY_ENV}"
+                '''
+            }
+        }
+
+        stage('Install Dependencies') {
+            parallel {
+
+                stage('Backend — npm ci') {
+                    steps {
+                        echo "Installing backend Node.js dependencies..."
+                        dir("${BACKEND_DIR}") {
+                            sh 'npm ci'
+                        }
+                    }
+                }
+
+                stage('Frontend — npm ci') {
+                    steps {
+                        echo "Installing frontend Node.js dependencies..."
+                        dir("${FRONTEND_DIR}") {
+                            sh 'npm ci'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Test') {
+            when {
+                not { expression { return params.SKIP_TESTS } }
+            }
+            parallel {
+
+                stage('Backend — Jest Tests') {
+                    steps {
+                        echo "Running Jest unit tests..."
+                        dir("${BACKEND_DIR}") {
+                            sh 'npm test'
+                        }
+                    }
+                    post {
+                        always {
+                            junit allowEmptyResults: true, testResults: "${BACKEND_DIR}/test-results*.xml"
+                        }
+                    }
+                }
+
+                stage('Python — flake8 + bandit') {
+                    steps {
+                        echo "Running Python static analysis..."
+                        sh '''
+                            pip3 install --quiet flake8 bandit
+
+                            echo "--- flake8 ---"
+                            flake8 backend/src/ \
+                                --max-line-length=120 \
+                                --exclude=__pycache__ \
+                                --statistics
+
+                            echo "--- bandit ---"
+                            bandit -r backend/src/ -ll
+                        '''
+                    }
+                }
+
+                stage('Frontend — ESLint') {
+                    steps {
+                        echo "Running frontend lint..."
+                        dir("${FRONTEND_DIR}") {
+                            sh 'npm run lint'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Build') {
+            parallel {
+
+                stage('Frontend — Vite Build') {
+                    steps {
+                        echo "Building frontend with Vite..."
+                        withCredentials([
+                            string(credentialsId: 'vite-api-url', variable: 'VITE_API_URL')
+                        ]) {
+                            dir("${FRONTEND_DIR}") {
+                                sh 'npm run build'
+                            }
+                        }
+                    }
+                }
+
+                stage('Backend — TypeScript Build') {
+                    steps {
+                        echo "Compiling TypeScript..."
+                        dir("${BACKEND_DIR}") {
+                            sh 'npm run build'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                echo "Building frontend Docker image: ${IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                withCredentials([
+                    string(credentialsId: 'vite-api-url', variable: 'VITE_API_URL')
+                ]) {
+                    sh '''
+                        cp -r ${FRONTEND_DIR}/dist docker/frontend/dist
+
+                        docker build \
+                            --build-arg VITE_API_URL="${VITE_API_URL}" \
+                            -t ${IMAGE_NAME}:${DOCKER_IMAGE_TAG} \
+                            -t ${IMAGE_NAME}:latest \
+                            docker/frontend/
+                    '''
+                }
+            }
+        }
+
+        stage('Security Scan') {
+            steps {
+                echo "Running Trivy container security scan..."
+                sh '''
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest image \
+                            ${IMAGE_NAME}:${DOCKER_IMAGE_TAG} \
+                            --severity HIGH,CRITICAL \
+                            --exit-code 0 \
+                            --no-progress
+                '''
+            }
+        }
+
+        stage('Terraform Plan') {
+            when {
+                expression { return params.DEPLOY_INFRA }
+            }
+            steps {
+                echo "Running Terraform plan for environment: ${params.DEPLOY_ENV}"
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id',  variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-key',      variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir("${TERRAFORM_DIR}") {
+                        sh '''
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+
+                            terraform init -reconfigure
+
+                            terraform plan \
+                                -var-file=environments/${DEPLOY_ENV}.tfvars \
+                                -out=tfplan \
+                                -detailed-exitcode || true
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            when {
+                allOf {
+                    expression { return params.DEPLOY_INFRA }
+                    branch 'main'
+                }
+            }
+            steps {
+                script {
+                    if (params.DEPLOY_ENV == 'prod') {
+                        timeout(time: 10, unit: 'MINUTES') {
+                            input(
+                                message: "🚀 Approve Terraform Apply to PRODUCTION?",
+                                ok: 'Deploy to Production',
+                                submitterParameter: 'APPROVED_BY'
+                            )
+                        }
+                        echo "Production apply approved by: ${env.APPROVED_BY}"
+                    } else {
+                        echo "Dev environment — auto-approving Terraform apply."
+                    }
+                }
+
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id',  variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-key',      variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir("${TERRAFORM_DIR}") {
+                        sh '''
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            terraform apply -auto-approve tfplan
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Backend') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo "Deploying CDK stacks to AWS (${params.DEPLOY_ENV})..."
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id',  variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-key',      variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir("${BACKEND_DIR}") {
+                        sh '''
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+
+                            npx cdk deploy \
+                                --require-approval never \
+                                --all \
+                                --outputs-file /tmp/cdk-outputs.json
+
+                            echo "=== CDK Outputs ==="
+                            cat /tmp/cdk-outputs.json || true
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Frontend') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo "Syncing frontend to S3 and invalidating CloudFront..."
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id',  variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-key',      variable: 'AWS_SECRET_ACCESS_KEY'),
+                    string(credentialsId: 'frontend-bucket',     variable: 'FRONTEND_BUCKET_NAME'),
+                    string(credentialsId: 'cloudfront-dist-id',  variable: 'CLOUDFRONT_DISTRIBUTION_ID')
+                ]) {
+                    sh '''
+                        export AWS_DEFAULT_REGION=${AWS_REGION}
+
+                        echo "--- Syncing hashed assets (immutable cache) ---"
+                        aws s3 sync ${FRONTEND_DIR}/dist/ \
+                            s3:
+                            --delete \
+                            --exclude "index.html" \
+                            --cache-control "max-age=31536000,public,immutable" \
+                            --metadata-directive REPLACE
+
+                        echo "--- Copying index.html (no-cache) ---"
+                        aws s3 cp ${FRONTEND_DIR}/dist/index.html \
+                            s3:
+                            --cache-control "no-cache" \
+                            --metadata-directive REPLACE
+
+                        echo "--- CloudFront cache invalidation ---"
+                        if [ -n "${CLOUDFRONT_DISTRIBUTION_ID}" ]; then
+                            aws cloudfront create-invalidation \
+                                --distribution-id ${CLOUDFRONT_DISTRIBUTION_ID} \
+                                --paths "/*"
+                        else
+                            echo "CLOUDFRONT_DISTRIBUTION_ID not set — skipping invalidation."
+                        fi
+                    '''
+                }
+            }
+        }
+
+        stage('Monitoring Stack') {
+            when {
+                expression { return params.DEPLOY_INFRA }
+            }
+            steps {
+                echo "Starting Grafana + Prometheus monitoring stack..."
+                sh '''
+                    docker compose \
+                        -f docker/monitoring/docker-compose.yml \
+                        up -d --remove-orphans
+
+                    echo "Monitoring stack started."
+                    echo "  Grafana  → http://localhost:3000"
+                    echo "  Jenkins  → http://localhost:8080"
+                '''
+            }
+        }
+
+    }
+
+    post {
+
+        always {
+            echo "=== Pipeline finished — cleaning workspace ==="
+            cleanWs(
+                cleanWhenNotBuilt: true,
+                cleanWhenSuccess: true,
+                cleanWhenFailure: false,
+                deleteDirs: true
+            )
+        }
+
+        success {
+            echo "✅ Pipeline SUCCEEDED for ${env.GIT_BRANCH} @ ${env.GIT_COMMIT}"
+        }
+
+        failure {
+            echo "❌ Pipeline FAILED for ${env.GIT_BRANCH} @ ${env.GIT_COMMIT}"
+        }
+
+        unstable {
+            echo "⚠️ Pipeline is UNSTABLE (tests may have failed) for ${env.GIT_BRANCH}"
+        }
+
+    }
+
+}

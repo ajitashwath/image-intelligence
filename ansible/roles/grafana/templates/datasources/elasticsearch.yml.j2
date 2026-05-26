@@ -1,0 +1,44 @@
+﻿apiVersion: 1
+
+datasources:
+
+  - name:      "Elasticsearch"
+    type:      elasticsearch
+    uid:       "elasticsearch-ds"
+    access:    proxy
+
+    url:       "http://elasticsearch:9200"
+
+    basicAuth:         true
+    basicAuthUser:     "elastic"
+    secureJsonData:
+      basicAuthPassword: "{{ elastic_password }}"
+
+    isDefault: true
+
+    jsonData:
+      esVersion:       "8.0.0"
+
+      timeField:       "@timestamp"
+
+      index:           "image-intelligence-*"
+
+      logMessageField: "message"
+      logLevelField:   "lambda_log.level"
+
+      maxConcurrentShardRequests: 5
+
+      interval: Daily
+
+    editable: true
+
+  - name:   "CloudWatch"
+    type:   cloudwatch
+    uid:    "cloudwatch-ds"
+    access: proxy
+
+    jsonData:
+      authType:      "default"
+      defaultRegion: "{{ aws_region }}"
+
+    editable: true

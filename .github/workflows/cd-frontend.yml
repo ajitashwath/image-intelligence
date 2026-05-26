@@ -1,0 +1,105 @@
+﻿name: CD — Frontend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "frontend/**"
+
+  workflow_run:
+    workflows:
+      - "CD — Backend"
+    types:
+      - completed
+    branches:
+      - main
+
+concurrency:
+  group: cd-frontend-production
+  cancel-in-progress: false
+
+jobs:
+
+  deploy-frontend:
+    name: "Deploy — Frontend to S3 / CloudFront"
+    runs-on: ubuntu-latest
+
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+
+    environment: production
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: GitHubActionsFrontendDeploy-${{ github.run_id }}
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Vite production build
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: npm run build
+
+      - name: Build frontend Docker image
+        run: |
+          cp -r frontend/dist docker/frontend/dist
+          docker build \
+            --build-arg VITE_API_URL=${{ secrets.VITE_API_URL }} \
+            -t frontend:${{ github.sha }} \
+            docker/frontend/
+
+      - name: S3 sync — hashed static assets (immutable cache)
+        run: |
+          aws s3 sync frontend/dist/ \
+            s3://${{ secrets.FRONTEND_BUCKET_NAME }}/ \
+            --delete \
+            --exclude "index.html" \
+            --cache-control "max-age=31536000,public,immutable" \
+            --metadata-directive REPLACE
+
+      - name: S3 copy — index.html (no-cache)
+        run: |
+          aws s3 cp frontend/dist/index.html \
+            s3://${{ secrets.FRONTEND_BUCKET_NAME }}/index.html \
+            --cache-control "no-cache" \
+            --metadata-directive REPLACE
+
+      - name: CloudFront cache invalidation
+        if: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID != '' }}
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
+          echo "::notice title=CloudFront::Cache invalidated for distribution ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
+
+      - name: Deployment summary
+        run: |
+          echo "### Frontend Deploy Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Key | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | ----- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Bucket | \`${{ secrets.FRONTEND_BUCKET_NAME }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Git SHA | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| API URL | \`${{ secrets.VITE_API_URL }}\` |" >> "$GITHUB_STEP_SUMMARY"

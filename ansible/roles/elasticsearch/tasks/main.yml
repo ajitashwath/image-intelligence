@@ -1,0 +1,95 @@
+﻿---
+
+- name: Create Elasticsearch data directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/elasticsearch/data"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode:  "0755"
+  tags: [elasticsearch, directories]
+
+- name: Create Elasticsearch config directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/elasticsearch/config"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode:  "0755"
+  tags: [elasticsearch, directories]
+
+- name: Create Elasticsearch logs directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/elasticsearch/logs"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode:  "0755"
+  tags: [elasticsearch, directories]
+
+- name: Template elasticsearch.yml to config directory
+  ansible.builtin.template:
+    src:   elasticsearch.yml.j2
+    dest:  "{{ app_dir }}/elasticsearch/config/elasticsearch.yml"
+    owner: "1000"
+    group: "1000"
+    mode:  "0644"
+  tags: [elasticsearch, config]
+
+- name: Pull Elasticsearch Docker image (8.13.0)
+  community.docker.docker_image:
+    name:   "docker.elastic.co/elasticsearch/elasticsearch"
+    tag:    "{{ elastic_version }}"
+    source: pull
+  tags: [elasticsearch, image]
+
+- name: Run Elasticsearch container
+  community.docker.docker_container:
+    name:  elasticsearch
+    image: "docker.elastic.co/elasticsearch/elasticsearch:{{ elastic_version }}"
+    state: started
+
+    env:
+      discovery.type:       "single-node"
+      ELASTIC_PASSWORD:     "{{ elastic_password }}"
+      ES_JAVA_OPTS:         "-Xms{{ elastic_heap_size }} -Xmx{{ elastic_heap_size }}"
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      ingest.geoip.downloader.enabled: "false"
+
+    published_ports:
+      - "{{ elasticsearch_port }}:9200"
+
+    volumes:
+      - "{{ app_dir }}/elasticsearch/data:/usr/share/elasticsearch/data"
+      - "{{ app_dir }}/elasticsearch/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro"
+      - "{{ app_dir }}/elasticsearch/logs:/usr/share/elasticsearch/logs"
+
+    networks:
+      - name: "{{ monitoring_network }}"
+
+    restart_policy: always
+
+    memory: "1g"
+
+  tags: [elasticsearch, container]
+
+- name: Wait for Elasticsearch to respond on port 9200
+  ansible.builtin.uri:
+    url:              "http://localhost:{{ elasticsearch_port }}"
+    method:           GET
+    user:             elastic
+    password:         "{{ elastic_password }}"
+    force_basic_auth: true
+    status_code:      200
+    validate_certs:   false
+  register: es_health
+  until:    es_health.status == 200
+  retries:  30
+  delay:    10
+  tags: [elasticsearch, healthcheck]
+
+- name: Report Elasticsearch cluster status
+  ansible.builtin.debug:
+    msg: "Elasticsearch is up — cluster name: {{ es_health.json.cluster_name | default('unknown') }}"
+  tags: [elasticsearch, healthcheck]

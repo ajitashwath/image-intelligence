@@ -1,0 +1,10 @@
+﻿---
+
+- name: Apply common configuration to all hosts
+  import_playbook: docker.yml
+
+- name: Deploy monitoring stack (ELK + Grafana)
+  import_playbook: monitoring.yml
+
+- name: Deploy Jenkins CI/CD server
+  import_playbook: jenkins.yml

@@ -1,0 +1,81 @@
+﻿---
+
+- name: Create Kibana config directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/kibana/config"
+    state: directory
+    owner: "{{ ec2_default_user }}"
+    group: "{{ ec2_default_user }}"
+    mode:  "0755"
+  tags: [kibana, directories]
+
+- name: Template kibana.yml to config directory
+  ansible.builtin.template:
+    src:   kibana.yml.j2
+    dest:  "{{ app_dir }}/kibana/config/kibana.yml"
+    owner: "{{ ec2_default_user }}"
+    group: "{{ ec2_default_user }}"
+    mode:  "0644"
+  tags: [kibana, config]
+
+- name: Pull Kibana Docker image (8.13.0)
+  community.docker.docker_image:
+    name:   "docker.elastic.co/kibana/kibana"
+    tag:    "{{ kibana_version }}"
+    source: pull
+  tags: [kibana, image]
+
+- name: Run Kibana container
+  community.docker.docker_container:
+    name:  kibana
+    image: "docker.elastic.co/kibana/kibana:{{ kibana_version }}"
+    state: started
+
+    env:
+      ELASTICSEARCH_HOSTS:    "http://elasticsearch:9200"
+      ELASTICSEARCH_USERNAME: "elastic"
+      ELASTICSEARCH_PASSWORD: "{{ elastic_password }}"
+
+      SERVER_HOST:  "0.0.0.0"
+      SERVER_NAME:  "image-intelligence-kibana"
+
+      XPACK_TELEMETRY_ENABLED:          "false"
+      XPACK_REPORTING_ENABLED:          "false"
+      MONITORING_KIBANA_COLLECTION_ENABLED: "false"
+
+    published_ports:
+      - "{{ kibana_port }}:5601"
+
+    volumes:
+      - "{{ app_dir }}/kibana/config/kibana.yml:/usr/share/kibana/config/kibana.yml:ro"
+
+    networks:
+      - name: "{{ monitoring_network }}"
+
+    links:
+      - "elasticsearch:elasticsearch"
+
+    restart_policy: always
+    memory:         "512m"
+
+  tags: [kibana, container]
+
+- name: Wait for Kibana API to respond (up to 5 minutes)
+  ansible.builtin.uri:
+    url:            "http://localhost:{{ kibana_port }}/api/status"
+    method:         GET
+    status_code:    200
+    validate_certs: false
+    user:           elastic
+    password:       "{{ elastic_password }}"
+    force_basic_auth: true
+  register: kibana_health
+  until:    kibana_health.status == 200
+  retries:  30
+  delay:    10
+  tags: [kibana, healthcheck]
+
+- name: Report Kibana status
+  ansible.builtin.debug:
+    msg: "Kibana is healthy — status: {{ kibana_health.json.status.overall.level | default('unknown') }}"
+  tags: [kibana, healthcheck]

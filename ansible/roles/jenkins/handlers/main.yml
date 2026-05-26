@@ -1,0 +1,7 @@
+﻿---
+
+- name: restart jenkins
+  ansible.builtin.systemd:
+    name:  jenkins
+    state: restarted
+  listen: restart jenkins

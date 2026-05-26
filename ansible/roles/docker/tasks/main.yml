@@ -1,0 +1,73 @@
+﻿---
+
+- name: Install Docker apt transport prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state:        present
+    update_cache: true
+  tags: [docker, packages]
+
+- name: Create /etc/apt/keyrings directory for Docker GPG key
+  ansible.builtin.file:
+    path:  /etc/apt/keyrings
+    state: directory
+    mode:  "0755"
+  tags: [docker]
+
+- name: Download Docker's official GPG key
+  ansible.builtin.get_url:
+    url:      https://download.docker.com/linux/ubuntu/gpg
+    dest:     /etc/apt/keyrings/docker.asc
+    mode:     "0644"
+    force:    false
+  tags: [docker]
+
+- name: Add Docker apt repository (Ubuntu 22.04 / jammy)
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/ubuntu
+      {{ ansible_distribution_release }} stable
+    state:    present
+    filename: docker
+    update_cache: true
+  tags: [docker]
+
+- name: Install Docker CE and related packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state:        present
+    update_cache: false
+  notify: restart docker
+  tags: [docker]
+
+- name: Start and enable Docker service on boot
+  ansible.builtin.systemd:
+    name:          docker
+    state:         started
+    enabled:       true
+    daemon_reload: true
+  tags: [docker, service]
+
+- name: Add ubuntu user to the docker group (no sudo required for docker CLI)
+  ansible.builtin.user:
+    name:   "{{ ec2_default_user }}"
+    groups: docker
+    append: true
+  tags: [docker, security]
+
+- name: Create shared 'monitoring' Docker bridge network
+  community.docker.docker_network:
+    name:   "{{ monitoring_network }}"
+    driver: bridge
+    state:  present
+  tags: [docker, network]

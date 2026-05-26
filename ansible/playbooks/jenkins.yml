@@ -1,0 +1,10 @@
+﻿---
+
+- name: Deploy Jenkins CI/CD server
+  hosts: monitoring
+
+  gather_facts: true
+
+  roles:
+    - role: jenkins
+      tags: [jenkins, cicd]

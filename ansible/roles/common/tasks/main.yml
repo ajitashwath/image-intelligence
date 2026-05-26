@@ -1,0 +1,80 @@
+﻿---
+
+- name: Update apt package cache
+  ansible.builtin.apt:
+    update_cache:     true
+    cache_valid_time: 3600
+  tags: [packages]
+
+- name: Install essential system packages
+  ansible.builtin.apt:
+    name:  "{{ common_packages }}"
+    state: present
+  tags: [packages]
+
+- name: Set system timezone to UTC
+  community.general.timezone:
+    name: "{{ system_timezone }}"
+  tags: [timezone]
+
+- name: Create application base directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}"
+    state: directory
+    owner: "{{ ec2_default_user }}"
+    group: "{{ ec2_default_user }}"
+    mode:  "0755"
+  tags: [directories]
+
+- name: Ensure app directory subdirectories exist
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/{{ item }}"
+    state: directory
+    owner: "{{ ec2_default_user }}"
+    group: "{{ ec2_default_user }}"
+    mode:  "0755"
+  loop:
+    - logs
+    - scripts
+    - backups
+  tags: [directories]
+
+- name: Set vm.max_map_count at runtime (takes effect immediately)
+  ansible.posix.sysctl:
+    name:   vm.max_map_count
+    value:  "{{ vm_max_map_count }}"
+    state:  present
+    sysctl_set: true
+    reload: true
+  tags: [sysctl, elasticsearch]
+
+- name: Persist vm.max_map_count in /etc/sysctl.conf (survives reboots)
+  ansible.builtin.lineinfile:
+    path:   /etc/sysctl.conf
+    regexp: '^vm\.max_map_count'
+    line:   "vm.max_map_count = {{ vm_max_map_count }}"
+    state:  present
+    backup: true
+  tags: [sysctl, elasticsearch]
+
+- name: Disable swap for current session
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+  tags: [sysctl]
+
+- name: Ensure swap is disabled on reboot (comment out swap in /etc/fstab)
+  ansible.builtin.replace:
+    path:   /etc/fstab
+    regexp: '^([^#].*\s+swap\s+.*)$'
+    replace: '# \1'
+    backup: true
+  tags: [sysctl]
+
+- name: Install Python Docker SDK (required by Ansible docker_* modules)
+  ansible.builtin.pip:
+    name:
+      - docker
+      - docker-compose
+    executable: pip3
+    state: present
+  tags: [packages, docker]

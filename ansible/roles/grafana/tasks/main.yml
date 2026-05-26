@@ -1,0 +1,118 @@
+﻿---
+
+- name: Create Grafana data directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/grafana/data"
+    state: directory
+    owner: "472"
+    group: "472"
+    mode:  "0755"
+  tags: [grafana, directories]
+
+- name: Create Grafana provisioning/datasources directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/grafana/provisioning/datasources"
+    state: directory
+    owner: "472"
+    group: "472"
+    mode:  "0755"
+  tags: [grafana, directories]
+
+- name: Create Grafana provisioning/dashboards directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/grafana/provisioning/dashboards"
+    state: directory
+    owner: "472"
+    group: "472"
+    mode:  "0755"
+  tags: [grafana, directories]
+
+- name: Create Grafana dashboards storage directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/grafana/dashboards"
+    state: directory
+    owner: "472"
+    group: "472"
+    mode:  "0755"
+  tags: [grafana, directories]
+
+- name: Template Elasticsearch datasource provisioning file
+  ansible.builtin.template:
+    src:   datasources/elasticsearch.yml.j2
+    dest:  "{{ app_dir }}/grafana/provisioning/datasources/elasticsearch.yml"
+    owner: "472"
+    group: "472"
+    mode:  "0644"
+  tags: [grafana, config, provisioning]
+
+- name: Template dashboard provider provisioning file
+  ansible.builtin.template:
+    src:   dashboards/dashboards.yml.j2
+    dest:  "{{ app_dir }}/grafana/provisioning/dashboards/dashboards.yml"
+    owner: "472"
+    group: "472"
+    mode:  "0644"
+  tags: [grafana, config, provisioning]
+
+- name: Pull Grafana Docker image (latest)
+  community.docker.docker_image:
+    name:   grafana/grafana
+    tag:    "{{ grafana_version }}"
+    source: pull
+  tags: [grafana, image]
+
+- name: Run Grafana container
+  community.docker.docker_container:
+    name:  grafana
+    image: "grafana/grafana:{{ grafana_version }}"
+    state: started
+
+    env:
+      GF_SECURITY_ADMIN_PASSWORD: "{{ grafana_admin_password }}"
+      GF_SECURITY_ADMIN_USER:     "admin"
+
+      GF_INSTALL_PLUGINS: "{{ grafana_plugins | join(',') }}"
+
+      GF_PATHS_PROVISIONING: "/etc/grafana/provisioning"
+
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+
+      GF_USERS_ALLOW_SIGN_UP: "false"
+
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+
+      GF_SERVER_HTTP_PORT: "{{ grafana_port }}"
+
+    published_ports:
+      - "{{ grafana_port }}:{{ grafana_port }}"
+
+    volumes:
+      - "{{ app_dir }}/grafana/data:/var/lib/grafana"
+      - "{{ app_dir }}/grafana/provisioning:/etc/grafana/provisioning:ro"
+      - "{{ app_dir }}/grafana/dashboards:/var/lib/grafana/dashboards:ro"
+
+    networks:
+      - name: "{{ monitoring_network }}"
+
+    restart_policy: always
+    memory:         "256m"
+
+  tags: [grafana, container]
+
+- name: Wait for Grafana API to respond
+  ansible.builtin.uri:
+    url:            "http://localhost:{{ grafana_port }}/api/health"
+    method:         GET
+    status_code:    200
+    validate_certs: false
+  register: grafana_health
+  until:    grafana_health.status == 200
+  retries:  20
+  delay:    10
+  tags: [grafana, healthcheck]
+
+- name: Report Grafana status
+  ansible.builtin.debug:
+    msg: "Grafana is healthy — database: {{ grafana_health.json.database | default('unknown') }}"
+  tags: [grafana, healthcheck]

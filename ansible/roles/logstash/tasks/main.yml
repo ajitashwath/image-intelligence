@@ -1,0 +1,88 @@
+﻿---
+
+- name: Create Logstash pipeline directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/logstash/pipeline"
+    state: directory
+    owner: "{{ ec2_default_user }}"
+    group: "{{ ec2_default_user }}"
+    mode:  "0755"
+  tags: [logstash, directories]
+
+- name: Create Logstash config directory
+  ansible.builtin.file:
+    path:  "{{ app_dir }}/logstash/config"
+    state: directory
+    owner: "{{ ec2_default_user }}"
+    group: "{{ ec2_default_user }}"
+    mode:  "0755"
+  tags: [logstash, directories]
+
+- name: Copy aws-logs.conf pipeline to the pipeline directory
+  ansible.builtin.copy:
+    src:   aws-logs.conf
+    dest:  "{{ app_dir }}/logstash/pipeline/aws-logs.conf"
+    owner: "{{ ec2_default_user }}"
+    group: "{{ ec2_default_user }}"
+    mode:  "0644"
+  tags: [logstash, config]
+
+- name: Pull Logstash Docker image (8.13.0)
+  community.docker.docker_image:
+    name:   "docker.elastic.co/logstash/logstash"
+    tag:    "{{ logstash_version }}"
+    source: pull
+  tags: [logstash, image]
+
+- name: Run Logstash container
+  community.docker.docker_container:
+    name:  logstash
+    image: "docker.elastic.co/logstash/logstash:{{ logstash_version }}"
+    state: started
+
+    env:
+      ELASTICSEARCH_HOST:     "http://elasticsearch:9200"
+      ELASTICSEARCH_USER:     "elastic"
+      ELASTICSEARCH_PASSWORD: "{{ elastic_password }}"
+
+      LS_JAVA_OPTS: "-Xms{{ logstash_heap_size }} -Xmx{{ logstash_heap_size }}"
+
+      PIPELINE_WORKERS: "1"
+
+    published_ports:
+      - "{{ logstash_beats_port }}:5044"
+      - "{{ logstash_udp_port }}:5000/udp"
+
+    volumes:
+      - "{{ app_dir }}/logstash/pipeline:/usr/share/logstash/pipeline:ro"
+      - "{{ app_dir }}/logstash/config:/usr/share/logstash/config:ro"
+
+    networks:
+      - name: "{{ monitoring_network }}"
+
+    links:
+      - "elasticsearch:elasticsearch"
+
+    restart_policy: always
+    memory:         "768m"
+
+  tags: [logstash, container]
+
+- name: Wait 30 seconds for Logstash to initialize and connect to Elasticsearch
+  ansible.builtin.pause:
+    seconds: 30
+    prompt:  "Waiting for Logstash to start up and load the pipeline…"
+  tags: [logstash, healthcheck]
+
+- name: Verify Logstash API is responding
+  ansible.builtin.uri:
+    url:            "http://localhost:9600"
+    method:         GET
+    status_code:    200
+    validate_certs: false
+  register: logstash_health
+  until:   logstash_health.status == 200
+  retries: 12
+  delay:   10
+  ignore_errors: true
+  tags: [logstash, healthcheck]

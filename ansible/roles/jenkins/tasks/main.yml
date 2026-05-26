@@ -1,0 +1,141 @@
+﻿---
+
+- name: Update apt cache before Java installation
+  ansible.builtin.apt:
+    update_cache:     true
+    cache_valid_time: 3600
+  tags: [jenkins, java]
+
+- name: Install OpenJDK 17 (required by Jenkins LTS)
+  ansible.builtin.apt:
+    name:  "openjdk-{{ java_version }}-jdk"
+    state: present
+  tags: [jenkins, java]
+
+- name: Set JAVA_HOME system-wide in /etc/environment
+  ansible.builtin.lineinfile:
+    path:   /etc/environment
+    regexp: '^JAVA_HOME='
+    line:   'JAVA_HOME=/usr/lib/jvm/java-{{ java_version }}-openjdk-amd64'
+    state:  present
+  tags: [jenkins, java]
+
+- name: Verify Java version
+  ansible.builtin.command: java -version
+  register:       java_version_output
+  changed_when:   false
+  ignore_errors:  false
+  tags: [jenkins, java]
+
+- name: Display Java version
+  ansible.builtin.debug:
+    msg: "Java installed: {{ java_version_output.stderr_lines[0] | default('unknown') }}"
+  tags: [jenkins, java]
+
+- name: Download Jenkins apt GPG key
+  ansible.builtin.get_url:
+    url:   https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+    dest:  /usr/share/keyrings/jenkins-keyring.asc
+    mode:  "0644"
+    force: false
+  tags: [jenkins, repo]
+
+- name: Add Jenkins LTS apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc]
+      https://pkg.jenkins.io/debian-stable binary/
+    state:        present
+    filename:     jenkins
+    update_cache: true
+  tags: [jenkins, repo]
+
+- name: Install Jenkins LTS package
+  ansible.builtin.apt:
+    name:  jenkins
+    state: present
+  tags: [jenkins, install]
+
+- name: Configure Jenkins HTTP port in /etc/default/jenkins (if file exists)
+  ansible.builtin.lineinfile:
+    path:   /etc/default/jenkins
+    regexp: '^HTTP_PORT='
+    line:   "HTTP_PORT={{ jenkins_port }}"
+    state:  present
+    create: false
+  ignore_errors: true
+  tags: [jenkins, config]
+
+- name: Configure Jenkins port via systemd override (Jenkins 2.332+)
+  ansible.builtin.blockinfile:
+    path:   /etc/systemd/system/jenkins.service.d/override.conf
+    create: true
+    block: |
+      [Service]
+      Environment="JENKINS_PORT={{ jenkins_port }}"
+      TimeoutStartSec=300
+  notify: restart jenkins
+  tags: [jenkins, config, service]
+
+- name: Reload systemd daemon after Jenkins override config
+  ansible.builtin.systemd:
+    daemon_reload: true
+  tags: [jenkins, service]
+
+- name: Start and enable Jenkins service
+  ansible.builtin.systemd:
+    name:    jenkins
+    state:   started
+    enabled: true
+  tags: [jenkins, service]
+
+- name: Wait for Jenkins web UI to respond on port {{ jenkins_port }}
+  ansible.builtin.uri:
+    url:            "http://localhost:{{ jenkins_port }}/login"
+    method:         GET
+    status_code:    200
+    validate_certs: false
+  register: jenkins_health
+  until:    jenkins_health.status == 200
+  retries:  30
+  delay:    10
+  tags: [jenkins, healthcheck]
+
+- name: Read Jenkins initial admin password
+  ansible.builtin.slurp:
+    src: /var/lib/jenkins/secrets/initialAdminPassword
+  register: jenkins_init_password
+  ignore_errors: true
+  tags: [jenkins, healthcheck]
+
+- name: Display Jenkins initial admin password
+  ansible.builtin.debug:
+    msg: >-
+      Jenkins initial admin password:
+      {{ jenkins_init_password.content | b64decode | trim
+         if not jenkins_init_password.failed
+         else 'Already configured or password file not found' }}
+  tags: [jenkins, healthcheck]
+
+- name: Install Jenkins plugins
+  community.general.jenkins_plugin:
+    name:       "{{ item }}"
+    state:      present
+    url:        "http://localhost:{{ jenkins_port }}"
+    url_username: admin
+    url_password: "{{ jenkins_admin_password }}"
+    timeout:    120
+    with_dependencies: true
+  loop: "{{ jenkins_plugins }}"
+  notify: restart jenkins
+  retries: 3
+  delay:   15
+  tags: [jenkins, plugins]
+
+- name: Add jenkins user to the docker group
+  ansible.builtin.user:
+    name:   jenkins
+    groups: docker
+    append: true
+  notify: restart jenkins
+  tags: [jenkins, docker]

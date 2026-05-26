@@ -1,0 +1,15 @@
+﻿apiVersion: 1
+
+datasources:
+  - name: CloudWatch
+    type: cloudwatch
+    access: proxy
+
+    jsonData:
+      authType: default
+      defaultRegion: us-east-1
+      customMetricsNamespaces: "AWS/Lambda,AWS/SQS,AWS/DynamoDB,AWS/ApiGateway"
+
+    version: 1
+    editable: false
+    isDefault: true

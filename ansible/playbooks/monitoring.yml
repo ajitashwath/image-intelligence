@@ -1,0 +1,22 @@
+﻿---
+
+- name: Deploy monitoring stack — ELK + Grafana
+  hosts: monitoring
+
+  gather_facts: true
+
+  roles:
+    - role: common
+      tags: [common, base]
+
+    - role: elasticsearch
+      tags: [elasticsearch, elk, monitoring]
+
+    - role: logstash
+      tags: [logstash, elk, monitoring]
+
+    - role: kibana
+      tags: [kibana, elk, monitoring]
+
+    - role: grafana
+      tags: [grafana, monitoring]

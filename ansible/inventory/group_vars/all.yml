@@ -1,0 +1,25 @@
+﻿---
+
+project_name: event-driven-image-intelligence
+app_dir:      /opt/image-intelligence
+aws_region:   us-east-1
+
+docker_compose_version: "2.24.0"
+
+monitoring_network: monitoring
+
+system_timezone: UTC
+
+vm_max_map_count: 262144
+
+common_packages:
+  - curl
+  - wget
+  - unzip
+  - git
+  - htop
+  - python3-pip
+  - awscli
+  - jq
+
+ec2_default_user: ubuntu

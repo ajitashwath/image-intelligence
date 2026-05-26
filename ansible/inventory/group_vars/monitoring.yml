@@ -1,0 +1,46 @@
+﻿---
+
+elastic_version:   "8.13.0"
+
+elastic_password:  "changeme_in_vault"
+
+elastic_heap_size: "512m"
+
+elasticsearch_port: 9200
+
+logstash_version:    "8.13.0"
+
+logstash_heap_size: "256m"
+
+logstash_beats_port: 5044
+
+logstash_udp_port:  5000
+
+kibana_version: "8.13.0"
+kibana_port:    5601
+
+grafana_version: "latest"
+grafana_port:    3000
+
+grafana_admin_password: "changeme_in_vault"
+
+grafana_plugins:
+  - grafana-cloudwatch-datasource
+  - grafana-piechart-panel
+
+jenkins_port: 8080
+
+jenkins_admin_password: "changeme_in_vault"
+
+java_version: "17"
+
+jenkins_plugins:
+  - git
+  - github
+  - workflow-aggregator
+  - pipeline-aws
+  - slack
+  - blueocean
+  - docker-workflow
+  - credentials-binding
+  - aws-credentials
