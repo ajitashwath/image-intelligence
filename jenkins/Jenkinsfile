@@ -1,4 +1,4 @@
-﻿pipeline {
+pipeline {
 
     agent any
 
@@ -294,7 +294,7 @@
 
                         echo "--- Syncing hashed assets (immutable cache) ---"
                         aws s3 sync ${FRONTEND_DIR}/dist/ \
-                            s3:
+                            s3://${FRONTEND_BUCKET_NAME}/ \
                             --delete \
                             --exclude "index.html" \
                             --cache-control "max-age=31536000,public,immutable" \
@@ -302,7 +302,7 @@
 
                         echo "--- Copying index.html (no-cache) ---"
                         aws s3 cp ${FRONTEND_DIR}/dist/index.html \
-                            s3:
+                            s3://${FRONTEND_BUCKET_NAME}/index.html \
                             --cache-control "no-cache" \
                             --metadata-directive REPLACE
 

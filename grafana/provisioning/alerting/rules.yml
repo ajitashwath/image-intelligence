@@ -1,0 +1,240 @@
+# grafana/provisioning/alerting/rules.yml
+# ──────────────────────────────────────────────────────────────────────────────
+# Grafana Unified Alerting — Alert Rules provisioning
+#
+# Three alert rules covering the most critical pipeline signals:
+#   1. DLQ depth ≥ 1          → messages are stuck / processing is failing
+#   2. Lambda error rate > 5% → something is throwing uncaught exceptions
+#   3. API Gateway 5xx > 0    → the dashboard endpoint is broken
+#
+# The datasource UID "cloudwatch" matches the `name: CloudWatch` entry in
+# grafana/provisioning/datasources/cloudwatch.yml (Grafana derives the UID
+# from the datasource name as a lowercase slug when no explicit uid is set).
+#
+# All intervals are kept conservative for a small-scale deployment.
+# ──────────────────────────────────────────────────────────────────────────────
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: image-intelligence-pipeline
+    folder: Image Intelligence
+    interval: 1m       # evaluation interval
+    rules:
+
+      # ── Rule 1: DLQ depth ──────────────────────────────────────────────────
+      # Fires when any message lands in the dead-letter queue.
+      # Corresponds to the "DLQ Depth (alert ≥ 1)" panel threshold already
+      # visible on the dashboard.
+      - uid: dlq-depth-alert
+        title: "DLQ Depth ≥ 1"
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: cloudwatch
+            model:
+              alias: DLQ Depth
+              dimensions:
+                QueueName:
+                  - BackendStack-TaskQueueDLQ*   # prefix matches CDK-generated name
+              expression: ""
+              highResolution: false
+              id: ""
+              matchExact: false
+              metricEditorMode: 0
+              metricName: ApproximateNumberOfMessagesVisible
+              metricQueryType: 0
+              namespace: AWS/SQS
+              period: "60"
+              queryMode: Metrics
+              refId: A
+              region: default
+              statistic: Maximum
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              hide: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s        # fire immediately — even 1 DLQ message is actionable
+        annotations:
+          summary: "Dead-letter queue has {{ $values.A }} message(s)"
+          description: >
+            One or more messages failed processing 3 times and landed in the DLQ.
+            Check CloudWatch Logs for the OrchestratorFunction for the root cause.
+        labels:
+          severity: critical
+          team: backend
+        isPaused: false
+
+      # ── Rule 2: Lambda error rate > 5% ────────────────────────────────────
+      # Fires when more than 5% of Lambda invocations in the last 5 minutes
+      # result in errors across all three functions.
+      - uid: lambda-error-rate-alert
+        title: "Lambda Error Rate > 5%"
+        condition: C
+        data:
+          - refId: Errors
+            datasourceUid: cloudwatch
+            model:
+              alias: Errors
+              dimensions: {}
+              expression: ""
+              matchExact: false
+              metricEditorMode: 0
+              metricName: Errors
+              metricQueryType: 0
+              namespace: AWS/Lambda
+              period: "300"
+              queryMode: Metrics
+              refId: Errors
+              region: default
+              statistic: Sum
+          - refId: Invocations
+            datasourceUid: cloudwatch
+            model:
+              alias: Invocations
+              dimensions: {}
+              expression: ""
+              matchExact: false
+              metricEditorMode: 0
+              metricName: Invocations
+              metricQueryType: 0
+              namespace: AWS/Lambda
+              period: "300"
+              queryMode: Metrics
+              refId: Invocations
+              region: default
+              statistic: Sum
+          - refId: ErrorRate
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: "$Errors / $Invocations * 100"
+              hide: false
+              refId: ErrorRate
+              type: math
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 5
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - ErrorRate
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: ErrorRate
+              hide: false
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m        # must stay above threshold for 5 min to avoid noise
+        annotations:
+          summary: "Lambda error rate is {{ $values.ErrorRate | printf \"%.1f\" }}%"
+          description: >
+            Lambda functions are throwing errors at > 5% of invocations.
+            Check CloudWatch Logs for OrchestratorFunction, NotifierFunction,
+            and DashboardFunction for stack traces.
+        labels:
+          severity: warning
+          team: backend
+        isPaused: false
+
+      # ── Rule 3: API Gateway 5xx errors > 0 ────────────────────────────────
+      # Fires when the dashboard API returns any server-side error.
+      - uid: apigw-5xx-alert
+        title: "API Gateway 5xx Errors > 0"
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: cloudwatch
+            model:
+              alias: 5xx Errors
+              dimensions:
+                ApiName:
+                  - Image Intelligence Service
+              expression: ""
+              matchExact: false
+              metricEditorMode: 0
+              metricName: 5XXError
+              metricQueryType: 0
+              namespace: AWS/ApiGateway
+              period: "60"
+              queryMode: Metrics
+              refId: A
+              region: default
+              statistic: Sum
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              hide: false
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "API Gateway returned {{ $values.A }} 5xx error(s) in the last minute"
+          description: >
+            The Image Intelligence REST API is returning 5xx responses.
+            This usually means the DashboardFunction Lambda is erroring or
+            DynamoDB is throttling. Check CloudWatch Logs immediately.
+        labels:
+          severity: critical
+          team: backend
+        isPaused: false

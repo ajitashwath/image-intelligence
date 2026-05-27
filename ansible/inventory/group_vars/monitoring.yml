@@ -1,8 +1,12 @@
-﻿---
+---
 
 elastic_version:   "8.13.0"
 
-elastic_password:  "changeme_in_vault"
+# Encrypt with: ansible-vault encrypt_string 'yourpassword' --name elastic_password
+# Then paste the !vault | block below.
+elastic_password: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  REPLACE_WITH_OUTPUT_OF_ansible-vault_encrypt_string
 
 elastic_heap_size: "512m"
 
@@ -22,7 +26,10 @@ kibana_port:    5601
 grafana_version: "latest"
 grafana_port:    3000
 
-grafana_admin_password: "changeme_in_vault"
+# Encrypt with: ansible-vault encrypt_string 'yourgrafanapassword' --name grafana_admin_password
+grafana_admin_password: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  REPLACE_WITH_OUTPUT_OF_ansible-vault_encrypt_string
 
 grafana_plugins:
   - grafana-cloudwatch-datasource
@@ -30,7 +37,10 @@ grafana_plugins:
 
 jenkins_port: 8080
 
-jenkins_admin_password: "changeme_in_vault"
+# Encrypt with: ansible-vault encrypt_string 'yourjenkinspassword' --name jenkins_admin_password
+jenkins_admin_password: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  REPLACE_WITH_OUTPUT_OF_ansible-vault_encrypt_string
 
 java_version: "17"
 

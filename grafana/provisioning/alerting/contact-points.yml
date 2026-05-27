@@ -1,0 +1,51 @@
+# grafana/provisioning/alerting/contact-points.yml
+# ──────────────────────────────────────────────────────────────────────────────
+# Grafana Unified Alerting — Contact Points provisioning
+#
+# This file is loaded automatically on Grafana startup when placed under
+# grafana/provisioning/alerting/ and the provisioning path is configured.
+#
+# Fill in your real SMTP or Slack credentials before deploying.
+# ──────────────────────────────────────────────────────────────────────────────
+
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: image-intelligence-alerts
+    receivers:
+      # ── Email (fill in SMTP settings in grafana.ini / docker-compose env) ──
+      - uid: email-receiver
+        type: email
+        settings:
+          addresses: REPLACE_WITH_YOUR_EMAIL@example.com
+          singleEmail: false
+        disableResolveMessage: false
+
+      # ── Slack (optional — set the webhook URL to enable) ──────────────────
+      - uid: slack-receiver
+        type: slack
+        settings:
+          url: REPLACE_WITH_SLACK_WEBHOOK_URL
+          # Example: https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXX
+          title: |
+            {{ if eq .Status "firing" }}🔥 ALERT{{ else }}✅ RESOLVED{{ end }}
+            {{ .CommonLabels.alertname }}
+          text: |
+            *Environment*: Image Intelligence Pipeline
+            *Summary*: {{ .CommonAnnotations.summary }}
+            {{ range .Alerts }}
+            • {{ .Annotations.description }}
+            {{ end }}
+        disableResolveMessage: false
+
+# ── Notification policies ────────────────────────────────────────────────────
+# Routes all alerts to the contact point above.
+policies:
+  - orgId: 1
+    receiver: image-intelligence-alerts
+    group_by: ['alertname', 'grafana_folder']
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes: []

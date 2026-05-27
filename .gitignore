@@ -216,3 +216,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ── Project-specific security exclusions ────────────────────────────────
+
+# EC2 SSH private key files — never commit these
+*.pem
+
+# Terraform local variable overrides with real secrets (IPs, key names).
+# Commit only the *.tfvars template files; keep real values in *.tfvars.local
+# and pass them with: terraform apply -var-file=environments/dev.tfvars.local
+terraform/environments/*.tfvars.local
+
+# Ansible vault password file — used by ansible-playbook --vault-password-file
+ansible/.vault-password
+
+# Stress test .env with real AWS resource names
+stress_test/.env

@@ -37,28 +37,27 @@ A highly concurrent, resilient pipeline using AWS serverless services (S3, Lambd
 
 Terraform manages **DevOps infrastructure only** (VPC, EC2 monitoring host, IAM/OIDC roles). Application resources (Lambda, S3, DynamoDB, etc.) are managed by AWS CDK.
 
-### Prerequisites
+### Step 0 — Bootstrap Terraform State (run once per AWS account)
 
 ```bash
-# 1. Create the S3 state bucket
-aws s3api create-bucket --bucket image-intelligence-tfstate --region us-east-1
-aws s3api put-bucket-versioning --bucket image-intelligence-tfstate \
-  --versioning-configuration Status=Enabled
-
-# 2. Create DynamoDB lock table
-aws dynamodb create-table \
-  --table-name image-intelligence-tf-locks \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST --region us-east-1
+# Creates the S3 state bucket and DynamoDB lock table
+# that terraform init needs. Idempotent — safe to re-run.
+chmod +x terraform/bootstrap.sh
+./terraform/bootstrap.sh
 ```
+
+> **Note**: This script wraps the two `aws` CLI commands documented in the script itself. Check your AWS credentials (`aws sts get-caller-identity`) before running.
 
 ### Usage
 
 ```bash
 cd terraform/
 
-# Edit environments/dev.tfvars — set monitoring_key_name and your_ip_cidr
+# Fill in environments/dev.tfvars:
+#   • monitoring_key_name — create with: aws ec2 create-key-pair --key-name image-intelligence-monitoring ...
+#   • your_ip_cidr        — get with:    curl -s https://checkip.amazonaws.com  (then append /32)
+# For real values keep a gitignored override file:
+#   cp environments/dev.tfvars environments/dev.tfvars.local  # fill in real values here
 
 terraform init
 terraform plan -var-file="environments/dev.tfvars"
@@ -112,7 +111,10 @@ ansible-playbook playbooks/monitoring.yml --tags grafana
 ### Role Execution Order
 `common` → `docker` → `elasticsearch` → `logstash` → `kibana` → `grafana` → `jenkins`
 
-> **Security**: Passwords in `group_vars/monitoring.yml` use `changeme_in_vault` placeholders. Use `ansible-vault encrypt_string` to encrypt secrets before committing.
+> **Security**: Passwords in `group_vars/monitoring.yml` use `!vault |` encrypted blocks.
+> See [`ansible/vault-setup.md`](./ansible/vault-setup.md) for the full setup guide including
+> how to run `ansible-vault encrypt_string`, where to paste the result, and how to wire
+> the vault password into GitHub Actions and Jenkins.
 
 ---
 
@@ -231,12 +233,16 @@ The dashboard ([`grafana/dashboards/image-pipeline.json`](./grafana/dashboards/i
 
 #### Required GitHub Secrets
 
-| Secret | Description |
-|--------|-------------|
-| `AWS_ROLE_ARN` | ARN of the OIDC IAM role (from `terraform output github_actions_role_arn`) |
-| `VITE_API_URL` | API Gateway URL from CDK deploy output |
-| `FRONTEND_BUCKET_NAME` | S3 bucket for static site hosting |
-| `CLOUDFRONT_DISTRIBUTION_ID` | (Optional) CloudFront distribution ID for cache invalidation |
+| Secret | Where to get it |
+|--------|-----------------|
+| `AWS_ROLE_ARN` | `terraform output github_actions_role_arn` |
+| `VITE_API_URL` | CDK output `ApiGatewayUrl` (printed after `cdk deploy`) |
+| `FRONTEND_BUCKET_NAME` | CDK output `FrontendBucketName` |
+| `CLOUDFRONT_DISTRIBUTION_ID` | CDK output `CloudFrontDistributionId` |
+
+> Go to: **GitHub repo → Settings → Secrets and variables → Actions → New repository secret**
+
+Add these in order: first deploy Terraform (to get `AWS_ROLE_ARN`), then deploy the CDK stack (to get the remaining three).
 
 ### Jenkins Pipeline
 
@@ -252,12 +258,16 @@ Checkout → Install → Test (parallel) → Build (parallel) → Docker Build
 
 #### Required Jenkins Credentials
 
+> **Jenkins UI path**: Manage Jenkins → Credentials → (global) → Add Credentials
+
 | ID | Type | Description |
 |----|------|-------------|
-| `aws-access-key-id` | Secret text | AWS Access Key |
-| `aws-secret-key` | Secret text | AWS Secret Key |
-| `vite-api-url` | Secret text | API Gateway URL |
-| `frontend-bucket` | Secret text | S3 bucket name |
+| `aws-access-key-id` | Secret text | AWS Access Key ID |
+| `aws-secret-key` | Secret text | AWS Secret Access Key |
+| `vite-api-url` | Secret text | API Gateway URL (CDK output `ApiGatewayUrl`) |
+| `frontend-bucket` | Secret text | S3 bucket name (CDK output `FrontendBucketName`) |
+| `cloudfront-dist-id` | Secret text | CloudFront distribution ID (CDK output `CloudFrontDistributionId`) |
+| `ansible-vault-password` | Secret text | Ansible Vault password (see [`ansible/vault-setup.md`](./ansible/vault-setup.md)) |
 
 ---
 
