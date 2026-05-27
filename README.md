@@ -18,8 +18,6 @@ A highly concurrent, resilient pipeline using AWS serverless services (S3, Lambd
 - **Resilient**: Configured Dead-Letter Queues (DLQ) and retries via SQS.
 - **Intelligent**: Automated image labeling and content moderation.
 
----
-
 ## DevOps Stack
 
 | Pillar | Tool | Location |
@@ -30,8 +28,6 @@ A highly concurrent, resilient pipeline using AWS serverless services (S3, Lambd
 | CI/CD | GitHub Actions + Jenkins | [`.github/workflows/`](./.github/workflows/) · [`jenkins/`](./jenkins/) |
 | Infrastructure Monitoring | Grafana + CloudWatch | [`grafana/`](./grafana/) |
 | Containerization | Docker + Docker Compose | [`docker/`](./docker/) |
-
----
 
 ## 1. Terraform — Provisioning
 
@@ -74,8 +70,6 @@ terraform output monitoring_ssh_command
 - **IAM Role** for GitHub Actions with CDK + deploy permissions
 - **IAM Role** for EC2 with CloudWatch read access (for Grafana)
 
----
-
 ## 2. Ansible — Configuration Management
 
 Ansible configures the monitoring EC2 — installs Docker, Elasticsearch, Logstash, Kibana, Grafana, and Jenkins.
@@ -116,8 +110,6 @@ ansible-playbook playbooks/monitoring.yml --tags grafana
 > how to run `ansible-vault encrypt_string`, where to paste the result, and how to wire
 > the vault password into GitHub Actions and Jenkins.
 
----
-
 ## 3. Elastic Stack — Log Management
 
 Ingests Lambda CloudWatch logs → **Filebeat** → **Logstash** → **Elasticsearch** → **Kibana**.
@@ -141,8 +133,6 @@ Elasticsearch (index: image-intelligence-YYYY.MM.dd)
 Import [`elastic/kibana/dashboards/image-pipeline.ndjson`](./elastic/kibana/dashboards/image-pipeline.ndjson) via **Kibana → Stack Management → Saved Objects → Import**.
 
 Panels include: Lambda invocations over time, Moderation Blocked events count, Error rate by function.
-
----
 
 ## 4. Docker — Containerization
 
@@ -196,8 +186,6 @@ docker build -t image-intelligence-jenkins docker/jenkins/
 docker run -p 8080:8080 -v jenkins_home:/var/jenkins_home image-intelligence-jenkins
 ```
 
----
-
 ## 5. Grafana — Infrastructure Monitoring
 
 Grafana reads **CloudWatch metrics** directly via the CloudWatch datasource (uses EC2 IAM role — no credentials needed).
@@ -218,8 +206,6 @@ The dashboard ([`grafana/dashboards/image-pipeline.json`](./grafana/dashboards/i
 1. Open Grafana → **Dashboards → Import**
 2. Upload `grafana/dashboards/image-pipeline.json`
 3. Select **CloudWatch** as the datasource
-
----
 
 ## 6. CI/CD — GitHub Actions + Jenkins
 
@@ -269,16 +255,12 @@ Checkout → Install → Test (parallel) → Build (parallel) → Docker Build
 | `cloudfront-dist-id` | Secret text | CloudFront distribution ID (CDK output `CloudFrontDistributionId`) |
 | `ansible-vault-password` | Secret text | Ansible Vault password (see [`ansible/vault-setup.md`](./ansible/vault-setup.md)) |
 
----
-
 ## Application Setup
 
 1. Make sure you have the AWS CDK CLI installed (`npm install -g aws-cdk`).
 2. Navigate to the `backend` directory and run `npm install`.
 3. Deploy the infrastructure using `cdk deploy`.
 4. Navigate to the `frontend` directory, run `npm install` and start the UI using `npm run dev`.
-
----
 
 ## Repository Structure
 
