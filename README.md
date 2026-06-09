@@ -1,6 +1,6 @@
 # Event-Driven Image Intelligence
 
-A highly concurrent, resilient pipeline using AWS serverless services (S3, Lambda, Rekognition, SQS, DynamoDB, and SNS) to process and analyze images — with a full DevOps layer for provisioning, configuration, observability, and CI/CD.
+A highly concurrent, resilient pipeline using AWS serverless services (S3, Lambda, Rekognition, SQS, DynamoDB, and SNS) to process and analyze images with a full DevOps layer for provisioning, configuration, observability, and CI/CD.
 
 ## Architecture
 
