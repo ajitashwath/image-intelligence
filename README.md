@@ -1,9 +1,7 @@
 # Event-Driven Image Intelligence
-
-A highly concurrent, resilient pipeline using AWS serverless services (S3, Lambda, Rekognition, SQS, DynamoDB, and SNS) to process and analyze images — with a full DevOps layer for provisioning, configuration, observability, and CI/CD.
+A highly concurrent pipeline using AWS serverless services (S3, Lambda, Rekognition, SQS, DynamoDB, and SNS) to process and analyze images with a full DevOps layer for provisioning, configuration, observability, and CI/CD.
 
 ## Architecture
-
 1. **S3 Storage**: Users upload images to an S3 bucket (`image-intelligence-raw`).
 2. **Lambda Orchestrator**: An S3 event triggers the orchestrator Lambda function, which parses the event and fans out tasks concurrently.
 3. **Amazon Rekognition**: Detects labels, objects, text, and moderation flags, returning JSON confidence scores.
@@ -12,7 +10,6 @@ A highly concurrent, resilient pipeline using AWS serverless services (S3, Lambd
 6. **SNS + SES Notification**: Fires an SNS topic to notify users of processing completion via email or webhook callbacks.
 
 ## Features
-
 - **Event-Driven**: Fully asynchronous processing triggered by file uploads.
 - **Highly Concurrent**: Parallel fan-out pattern for faster processing.
 - **Resilient**: Configured Dead-Letter Queues (DLQ) and retries via SQS.
@@ -29,12 +26,10 @@ A highly concurrent, resilient pipeline using AWS serverless services (S3, Lambd
 | Infrastructure Monitoring | Grafana + CloudWatch | [`grafana/`](./grafana/) |
 | Containerization | Docker + Docker Compose | [`docker/`](./docker/) |
 
-## 1. Terraform — Provisioning
-
+## 1. Terraform
 Terraform manages **DevOps infrastructure only** (VPC, EC2 monitoring host, IAM/OIDC roles). Application resources (Lambda, S3, DynamoDB, etc.) are managed by AWS CDK.
 
 ### Step 0 — Bootstrap Terraform State (run once per AWS account)
-
 ```bash
 # Creates the S3 state bucket and DynamoDB lock table
 # that terraform init needs. Idempotent — safe to re-run.
@@ -70,8 +65,7 @@ terraform output monitoring_ssh_command
 - **IAM Role** for GitHub Actions with CDK + deploy permissions
 - **IAM Role** for EC2 with CloudWatch read access (for Grafana)
 
-## 2. Ansible — Configuration Management
-
+## 2. Ansible
 Ansible configures the monitoring EC2 — installs Docker, Elasticsearch, Logstash, Kibana, Grafana, and Jenkins.
 
 ### Prerequisites
@@ -110,8 +104,7 @@ ansible-playbook playbooks/monitoring.yml --tags grafana
 > how to run `ansible-vault encrypt_string`, where to paste the result, and how to wire
 > the vault password into GitHub Actions and Jenkins.
 
-## 3. Elastic Stack — Log Management
-
+## 3. Elastic Stack 
 Ingests Lambda CloudWatch logs → **Filebeat** → **Logstash** → **Elasticsearch** → **Kibana**.
 
 ### Log Flow
@@ -134,8 +127,7 @@ Import [`elastic/kibana/dashboards/image-pipeline.ndjson`](./elastic/kibana/dash
 
 Panels include: Lambda invocations over time, Moderation Blocked events count, Error rate by function.
 
-## 4. Docker — Containerization
-
+## 4. Docker
 ### Frontend Container
 
 ```bash
@@ -186,8 +178,7 @@ docker build -t image-intelligence-jenkins docker/jenkins/
 docker run -p 8080:8080 -v jenkins_home:/var/jenkins_home image-intelligence-jenkins
 ```
 
-## 5. Grafana — Infrastructure Monitoring
-
+## 5. Grafana
 Grafana reads **CloudWatch metrics** directly via the CloudWatch datasource (uses EC2 IAM role — no credentials needed).
 
 ### Dashboard: Image Intelligence Pipeline
@@ -207,7 +198,7 @@ The dashboard ([`grafana/dashboards/image-pipeline.json`](./grafana/dashboards/i
 2. Upload `grafana/dashboards/image-pipeline.json`
 3. Select **CloudWatch** as the datasource
 
-## 6. CI/CD — GitHub Actions + Jenkins
+## 6. CI/CD: GitHub Actions + Jenkins
 
 ### GitHub Actions
 
